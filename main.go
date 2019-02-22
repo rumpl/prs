@@ -25,11 +25,6 @@ type Config struct {
 	Repos []Repo `json:"repos,omitempty"`
 }
 
-func prettyPrint(i interface{}) string {
-	s, _ := json.MarshalIndent(i, "", "\t")
-	return string(s)
-}
-
 func loadConfig(path string) (Config, error) {
 	jsonFile, err := os.Open(path)
 	if err != nil {
