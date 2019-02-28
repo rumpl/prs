@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
+	"path"
+	"sync"
 
 	"github.com/fatih/color"
 	"github.com/google/go-github/github"
@@ -45,36 +48,51 @@ func loadConfig(path string) (Config, error) {
 	return config, nil
 }
 
-func checkStatus(ctx context.Context, client *github.Client, login string, owner string, repo string) {
+func checkStatus(ctx context.Context, client *github.Client, login string, owner string, repo string, bitBar bool) {
 	pulls, _, err := client.PullRequests.List(ctx, owner, repo, nil)
 	if err != nil {
 		panic("Failed listing pull requests")
 	}
+	var wg sync.WaitGroup
+	wg.Add(len(pulls))
 
 	for _, v := range pulls {
-		if *v.User.Login == login {
-			status, _, err := client.Repositories.GetCombinedStatus(ctx, owner, repo, *v.Head.SHA, nil)
-			if err != nil {
-				panic("Failed getting the status of a pull request")
-			}
+		go func(v *github.PullRequest) {
+			defer wg.Done()
+			if *v.User.Login == login {
+				status, _, err := client.Repositories.GetCombinedStatus(ctx, owner, repo, *v.Head.SHA, nil)
+				if err != nil {
+					panic("Failed getting the status of a pull request")
+				}
 
-			fmt.Printf("%s #%d: ", *v.Base.Repo.FullName, *v.Number)
-			switch *status.State {
-			case "pending":
-				color.Set(color.FgBlue)
-			case "success":
-				color.Set(color.FgGreen)
-			case "failure":
-				color.Set(color.FgRed)
+				var fgColor string
+				switch *status.State {
+				case "pending":
+					fgColor = "blue"
+					color.Set(color.FgBlue)
+				case "success":
+					fgColor = "green"
+					color.Set(color.FgGreen)
+				case "failure":
+					fgColor = "red"
+					color.Set(color.FgRed)
+				}
+				fmt.Printf("%s #%d", *v.Base.Repo.FullName, *v.Number)
+				if bitBar {
+					fmt.Printf("%s|color=%s", *status.State, fgColor)
+				}
+				fmt.Println()
+				color.Set(color.Reset)
 			}
-			fmt.Println(*status.State)
-			color.Set(color.Reset)
-		}
+		}(v)
 	}
+	wg.Wait()
 }
 
 func main() {
-	config, err := loadConfig("./config.json")
+	var bitBar = flag.Bool("bit-bar", false, "")
+	flag.Parse()
+	config, err := loadConfig(path.Join(os.Getenv("HOME"), "./config.json"))
 	if err != nil {
 		panic("Cannot read config file")
 	}
@@ -87,7 +105,8 @@ func main() {
 
 	client := github.NewClient(tc)
 
+	fmt.Println("PRs")
 	for _, repo := range config.Repos {
-		checkStatus(ctx, client, config.Login, repo.Owner, repo.Repo)
+		checkStatus(ctx, client, config.Login, repo.Owner, repo.Repo, *bitBar)
 	}
 }
